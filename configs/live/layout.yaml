@@ -1,0 +1,38 @@
+includes:
+#TODO: Rename this file. These functions are what enables single use nodes in nodepool.
+  - python-file: openstack_functions.py
+
+pipelines:
+  - name: check
+    description: Newly uploaded patchsets enter this pipeline to receive an initial +/-1 Verified vote from Jenkins.
+    failure-message: Build failed.  For information on how to proceed, see https://wiki.openstack.org/wiki/GerritJenkinsGit#Test_Failures
+    footer-message: https://wiki.openstack.org/wiki/ThirdPartySystems/Pure_Storage_CI
+    manager: IndependentPipelineManager
+    trigger:
+      gerrit:
+        - event: patchset-created
+          branch: master
+        - event: change-restored
+          branch: master
+        - event: comment-added
+          branch: master
+          comment: (?i)^(Patch Set [0-9]+:)?( [\w\\+-]*)*(\n\n)?\s*(recheck|reverify)\s*$
+        - event: comment-added
+          branch: master
+          comment: (?i)^(Patch Set [0-9]+:)?( [\w\\+-]*)*(\n\n)?\s*recheck(( (?:bug|lp)[\s#:]*(\d+))|( no bug))\s*$
+        - event: comment-added
+          branch: master
+          comment: (?i)^(Patch Set [0-9]+:)?( [\w\\+-]*)*(\n\n)?\s*recheck(( (?:bug|lp)[\s#:]*(\d+))|( Pure Storage CI))\s*$
+
+    success:
+      gerrit:
+        verified: 0
+    failure:
+      gerrit:
+        verified: 0
+
+projects:
+  - name: openstack/cinder
+    check:
+      - PureISCSIDriver-tempest-dsvm-volume
+

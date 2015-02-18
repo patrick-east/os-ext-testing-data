@@ -1,0 +1,26 @@
+# Cinder 3rd Party CI
+- project:
+    name: cinder
+
+    jobs:
+        - PureISCSIDriver-tempest-dsvm-volume:
+            node: 'devstack-trusty-check'
+
+# Internal Pure testing (uses devstack slaves)
+- project:
+    name: icehouse
+
+    jobs:
+        - PureISCSIDriver-internal-{name}-tempest-dsvm-volume:
+            node: 'devstack-trusty-check'
+            zuul_branch: 'stable/icehouse'
+            cinder_branch: 'icehouse-pure'
+
+- project:
+    name: juno
+
+    jobs:
+        - PureISCSIDriver-internal-{name}-tempest-dsvm-volume:
+            node: 'devstack-trusty-check'
+            zuul_branch: 'stable/juno'
+            cinder_branch: 'juno-pure'

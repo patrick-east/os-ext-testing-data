@@ -1,0 +1,99 @@
+- job-template:
+    name: 'PureISCSIDriver-tempest-dsvm-volume'
+    node: '{node}'
+
+    wrappers:
+      - timeout:
+          timeout: 125
+          fail: true
+      - timestamps
+
+    builders:
+      - link-logs
+      - net-info
+      - devstack-checkout
+      - shell: |
+          #!/bin/bash -xe
+
+          # Get the slave configuration 
+          . /etc/pure-ci/slave.conf
+
+          function pre_test_hook {{
+              cat <<EOF >$BASE/new/devstack/local.conf
+          [[post-config|\$CINDER_CONF]]
+          [DEFAULT]
+          enabled_backends=puredriver-1
+          default_volume_type=puredriver-1
+          scheduler_default_filters=AvailabilityZoneFilter,CapabilitiesFilter
+
+          [puredriver-1]
+          volume_backend_name=puredriver-1
+          volume_driver=cinder.volume.drivers.pure.PureISCSIDriver
+          san_ip=$PURE_HOST
+          pure_api_token=$PURE_API_TOKEN
+          num_shell_tries=10
+          num_volume_device_scan_tries=10
+
+          use_multipath_for_image_xfer=True
+
+          [[post-config|\$NOVA_CONF]]
+          [libvirt]
+          iscsi_use_multipath=True
+          EOF
+
+              cat <<EOF >>$BASE/new/devstack/localrc
+          TEMPEST_VOLUME_DRIVER=pure
+          TEMPEST_VOLUME_VENDOR="Pure Storage"
+          CINDER_ENABLED_BACKENDS=pure:puredriver-1
+          BUILD_TIMEOUT=600
+          API_RATE_LIMIT=False
+          EOF
+
+              sudo pip install requests
+              sudo pip install purestorage
+
+          }}
+
+          export -f pre_test_hook
+
+          export PYTHONUNBUFFERED=true
+          export DEVSTACK_GATE_TIMEOUT=180
+          export DEVSTACK_GATE_TEMPEST=1
+          export DEVSTACK_GATE_TEMPEST_REGEX='^(?!.*test_volume_create_get_update_delete_from_image).*tempest.api.volume'
+          export RE_EXEC=true
+          export KEEP_LOCALRC=true
+          export TEMPEST_CONCURRENCY=1
+
+          # Let's use the http protocol instead of git protocol
+          # export GIT_BASE="http://github.com"
+          export GIT_BASE="https://review.openstack.org/p"
+
+          if [ -z $ZUUL_PROJECT ]; then
+              export ZUUL_PROJECT=openstack/cinder
+          fi
+          if [ -z $ZUUL_BRANCH ]; then
+              export ZUUL_BRANCH=master
+          fi
+
+          cp devstack-gate/devstack-vm-gate-wrap.sh ./safe-devstack-vm-gate-wrap.sh
+          ./safe-devstack-vm-gate-wrap.sh
+
+    publishers:
+      - postbuildscript:
+          onsuccess: False
+          onfailure: False
+          builders:
+             - pure-clean-array
+      - devstack-logs
+      - console-log
+
+- builder:
+    name: pure-clean-array
+    builders:
+      - shell: |
+          #!/bin/bash -xe
+          # Get the slave configuration
+          . /etc/pure-ci/slave.conf
+
+          git clone http://10.42.240.152/cinder_jenkins_data.git
+          ./cinder_jenkins_data/tools/clean_purity.py -a $PURE_HOST -t $PURE_API_TOKEN -p /opt/stack/new/screen-logs

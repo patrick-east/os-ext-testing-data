@@ -1,0 +1,135 @@
+- job-template:
+    name: 'PureISCSIDriver-internal-{name}-tempest-dsvm-volume'
+    node: '{node}'
+
+    wrappers:
+      - timeout:
+          timeout: 125
+          fail: true
+      - timestamps
+
+    scm:
+      - git:
+         url: http://10.42.240.152/plugins/openstack/cinder.git
+         branches:
+          - '{cinder_branch}'
+
+    triggers:
+      - pollscm: "H/3 * * * *"
+
+    builders:
+      - link-logs
+      - net-info
+      - devstack-checkout
+      - shell: |
+          #!/bin/bash -xe
+
+          # New settings to support stuff usually set by zuul etc.
+          export REPO_URL=https://review.openstack.org/p
+          export ZUUL_URL=/home/jenkins/workspace-cache
+          export ZUUL_REF=HEAD
+          export ZUUL_PROJECT=openstack/cinder
+          export ZUUL_BRANCH={zuul_branch}
+
+          # Get the slave configuration 
+          . /etc/pure-ci/slave.conf
+
+          function pre_test_hook {{
+              cat <<EOF >$BASE/new/devstack/local.conf
+          [[post-config|\$CINDER_CONF]]
+          [DEFAULT]
+          enabled_backends=puredriver-1
+          default_volume_type=puredriver-1
+          scheduler_default_filters=AvailabilityZoneFilter,CapabilitiesFilter
+
+          [puredriver-1]
+          volume_backend_name=puredriver-1
+          volume_driver=cinder.volume.drivers.pure.PureISCSIDriver
+          san_ip=$PURE_HOST
+          pure_api_token=$PURE_API_TOKEN
+          num_shell_tries=10
+          num_volume_device_scan_tries=10
+
+          use_multipath_for_image_xfer=True
+
+          [[post-config|\$NOVA_CONF]]
+          [libvirt]
+          iscsi_use_multipath=True
+          EOF
+
+              cat <<EOF >>$BASE/new/devstack/localrc
+          RECLONE=yes
+          CINDER_REPO=http://10.42.240.152/plugins/openstack/cinder.git
+          CINDER_BRANCH={cinder_branch}
+          TEMPEST_VOLUME_DRIVER=pure
+          TEMPEST_VOLUME_VENDOR="Pure Storage"
+          CINDER_ENABLED_BACKENDS=pure:puredriver-1
+          BUILD_TIMEOUT=600
+          API_RATE_LIMIT=False
+          EOF
+
+               sudo pip install requests
+               sudo pip install purestorage
+
+               # Work around a bug in the stable/icehouse DevStack branch
+               sed -i 's/iniset \$TEMPEST_CONFIG volume vendor_name \$TEMPEST_VOLUME_VENDOR/iniset \$TEMPEST_CONFIG volume vendor_name "\$TEMPEST_VOLUME_VENDOR"/' $BASE/new/devstack/lib/tempest
+
+               # Trick DevStack into re-cloning cinder with our desired repo instead
+               # of using the cached one that the nodepool prep scripts created
+               sed -i 's/ERROR_ON_CLONE=True/ERROR_ON_CLONE=False/' $BASE/new/devstack-gate/devstack-vm-gate.sh
+               sudo rm -rf $BASE/new/cinder
+          }}
+
+          export -f pre_test_hook
+
+          export PYTHONUNBUFFERED=true
+          export DEVSTACK_GATE_TIMEOUT=180
+          export DEVSTACK_GATE_TEMPEST=1
+          export DEVSTACK_GATE_TEMPEST_REGEX='^(?!.*test_volume_create_get_update_delete_from_image).*tempest.api.volume'
+          export RE_EXEC=true
+          export KEEP_LOCALRC=true
+          export TEMPEST_CONCURRENCY=1
+
+          # Let's use the http protocol instead of git protocol
+          # export GIT_BASE="http://github.com"
+          export GIT_BASE="https://review.openstack.org/p"
+
+          if [ -z $ZUUL_PROJECT ]; then
+              export ZUUL_PROJECT=openstack/cinder
+          fi
+          if [ -z $ZUUL_BRANCH ]; then
+              export ZUUL_BRANCH=master
+          fi
+
+          cp devstack-gate/devstack-vm-gate-wrap.sh ./safe-devstack-vm-gate-wrap.sh
+          ./safe-devstack-vm-gate-wrap.sh
+
+    publishers:
+      - postbuildscript:
+          onsuccess: False
+          onfailure: False
+          builders:
+             - pure-clean-array
+      - internal-devstack-logs
+      - internal-console-log
+
+- publisher:
+    name: internal-console-log
+    publishers:
+      - scp:
+          site: 'LogServer'
+          files:
+            - target: 'logs/$JOB_NAME-$BUILD_NUMBER'
+              copy-console: true
+              copy-after-failure: true
+
+- publisher:
+    name: internal-devstack-logs
+    publishers:
+      - scp:
+          site: 'LogServer'
+          files:
+            - target: 'logs/$JOB_NAME-$BUILD_NUMBER'
+              source: 'logs/**'
+              keep-hierarchy: true
+              copy-after-failure: true
